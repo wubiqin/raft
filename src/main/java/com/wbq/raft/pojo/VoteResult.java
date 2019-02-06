@@ -10,15 +10,11 @@ import java.io.Serializable;
  */
 @Builder
 @Getter
-public class RequestResult implements Serializable {
+public class VoteResult implements Serializable {
 
-    private static final long serialVersionUID = 4068521629159257258L;
-    /**
-     * 当前的任期号
-     */
+    private static final long serialVersionUID = -6589292223655994378L;
+
     private Long term;
-    /**
-     * preIndex 和 preTerm匹配
-     */
+
     private Boolean success;
 }

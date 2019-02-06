@@ -1,9 +1,7 @@
 package com.wbq.raft.config;
 
 /**
- *  * @author biqin.wu
- *  * @since 06 February 2019
- *  
+ *  * @author biqin.wu  * @since 06 February 2019  
  */
 public class NodeStatus {
 

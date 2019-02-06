@@ -14,6 +14,8 @@ import java.util.List;
 @Getter
 public class RequestParam<T> extends BaseParam {
 
+    private static final long serialVersionUID = 3142476754276804342L;
+
     private String leaderId;
 
     private Long preIndex;

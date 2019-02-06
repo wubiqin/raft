@@ -8,9 +8,7 @@ import java.io.Serializable;
 import java.util.Set;
 
 /**
- *  * @author biqin.wu
- *  * @since 06 February 2019
- *  
+ *  * @author biqin.wu  * @since 06 February 2019  
  */
 @Builder
 @Getter
@@ -19,7 +17,7 @@ public class NodeConfig implements Serializable {
 
     private static final long serialVersionUID = -4559044960402813096L;
 
-    private int port;
+    private Integer port;
     /**
      * all node address
      */

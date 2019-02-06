@@ -11,7 +11,7 @@ public class BaseParam implements Serializable {
     /**
      * 任期号
      */
-    private long term;
+    private Long term;
     /**
      * 请求者 ip:port
      */

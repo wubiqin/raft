@@ -18,9 +18,9 @@ public class LogEntry<T> implements Serializable, Comparable {
 
     private static final long serialVersionUID = 3078982288100998255L;
 
-    private long index;
+    private Long index;
 
-    private long term;
+    private Long term;
 
     private T data;
 
