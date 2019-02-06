@@ -9,9 +9,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- *  * @author biqin.wu
- *  * @since 06 February 2019
- *  
+ *  * @author biqin.wu  * @since 06 February 2019  
  */
 public class RaftThreadPoolExecutor extends ThreadPoolExecutor {
 
@@ -19,8 +17,10 @@ public class RaftThreadPoolExecutor extends ThreadPoolExecutor {
 
     private static final ThreadLocal<Long> COST_TIME = ThreadLocal.withInitial(System::currentTimeMillis);
 
-    public RaftThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue) {
-        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, new RaftThreadFactory("raft"), new RejectHandler(new ThreadPoolExecutor.AbortPolicy()));
+    public RaftThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit,
+            BlockingQueue<Runnable> workQueue) {
+        super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, new RaftThreadFactory("raft"),
+                new RejectHandler(new ThreadPoolExecutor.AbortPolicy()));
     }
 
     @Override
@@ -33,7 +33,7 @@ public class RaftThreadPoolExecutor extends ThreadPoolExecutor {
     @Override
     protected void afterExecute(Runnable r, Throwable t) {
         super.afterExecute(r, t);
-        log.debug("raft thread cost={}", System.currentTimeMillis() - COST_TIME.get());
+        log.debug("raft thread cost={}ms", System.currentTimeMillis() - COST_TIME.get());
         COST_TIME.remove();
     }
 
