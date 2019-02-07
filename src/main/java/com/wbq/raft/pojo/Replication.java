@@ -14,7 +14,7 @@ import java.util.concurrent.Callable;
 @Builder
 @Getter
 @ToString
-public class Replication<T> implements Serializable {
+public class Replication implements Serializable {
 
     private static final long serialVersionUID = -1574158518151670952L;
 
@@ -26,12 +26,11 @@ public class Replication<T> implements Serializable {
 
     private String successKey;
 
-    private Callable<T> callable;
+    private Callable callable;
 
     private LogEntry logEntry;
 
     private Partner partner;
 
     private Long offTime;
-
 }

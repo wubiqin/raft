@@ -12,7 +12,7 @@ import java.util.List;
 @Builder
 @ToString
 @Getter
-public class RequestParam<T> extends BaseParam {
+public class RequestParam extends BaseParam {
 
     private static final long serialVersionUID = 3142476754276804342L;
 
@@ -24,7 +24,7 @@ public class RequestParam<T> extends BaseParam {
     /**
      * 准备存储的日志 为空时代表心跳
      */
-    private List<LogEntry<T>> logEntries;
+    private List<LogEntry> logEntries;
     /**
      * leader 已经提交的日志的index
      */

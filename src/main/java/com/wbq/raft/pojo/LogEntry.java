@@ -14,7 +14,7 @@ import java.io.Serializable;
 @ToString
 @Getter
 @EqualsAndHashCode
-public class LogEntry<T> implements Serializable, Comparable {
+public class LogEntry implements Serializable, Comparable {
 
     private static final long serialVersionUID = 3078982288100998255L;
 
@@ -22,7 +22,7 @@ public class LogEntry<T> implements Serializable, Comparable {
 
     private Long term;
 
-    private T data;
+    private Command command;
 
     @Override
     public int compareTo(Object o) {
