@@ -49,7 +49,7 @@ public class DefaultNode implements Node, ClusterListener {
     }
 
     @Override
-    public void destory() throws Throwable {
+    public void destroy() throws Throwable {
 
     }
 

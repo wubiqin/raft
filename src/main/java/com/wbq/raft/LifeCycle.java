@@ -16,5 +16,5 @@ public interface LifeCycle {
      * 
      * @throws Throwable throw exception
      */
-    void destory() throws Throwable;
+    void destroy() throws Throwable;
 }
