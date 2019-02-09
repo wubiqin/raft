@@ -2,6 +2,11 @@ package com.wbq.raft.rpc;
 
 import com.alipay.remoting.BizContext;
 import com.wbq.raft.Node;
+import com.wbq.raft.change.ClusterListener;
+import com.wbq.raft.config.Partner;
+import com.wbq.raft.pojo.ClientRequest;
+import com.wbq.raft.pojo.RequestParam;
+import com.wbq.raft.pojo.VoteParam;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -38,6 +43,20 @@ public class DefaultRpcServer implements RpcServer {
 
     @Override
     public RpcResponse handle(RpcRequest request) {
-        return null;
+        switch (request.getType()) {
+        case VOTE:
+            return RpcResponse.builder().data(node.handleVote((VoteParam) request.getData())).build();
+        case APPEND_ENTRIES:
+            return RpcResponse.builder().data(node.handleAppendLog((RequestParam) request.getData())).build();
+        case CLIENT:
+            return RpcResponse.builder().data(node.handleClientRequest((ClientRequest) request.getData())).build();
+        case CONFIG_ADD:
+            return RpcResponse.builder().data(((ClusterListener) node).addPeer((Partner) request.getData())).build();
+        case CONFIG_REMOVE:
+            return RpcResponse.builder().data(((ClusterListener) node).removePeer((Partner) request.getData())).build();
+        default:
+            break;
+        }
+        throw new RuntimeException();
     }
 }
