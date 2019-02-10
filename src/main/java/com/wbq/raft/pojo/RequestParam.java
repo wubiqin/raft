@@ -12,9 +12,17 @@ import java.util.List;
 @Builder
 @ToString
 @Getter
-public class RequestParam extends BaseParam {
+public class RequestParam {
 
     private static final long serialVersionUID = 3142476754276804342L;
+    /**
+     * 任期号
+     */
+    private Long term;
+    /**
+     * 请求者 ip:port
+     */
+    private String serverId;
 
     private String leaderId;
 

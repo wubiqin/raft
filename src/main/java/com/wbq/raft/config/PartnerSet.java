@@ -10,9 +10,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- *  * @author biqin.wu
- *  * @since 06 February 2019
- *  
+ *  * @author biqin.wu  * @since 06 February 2019  
  */
 @Builder
 @Getter
@@ -48,10 +46,6 @@ public class PartnerSet implements Serializable {
 
     @Override
     public String toString() {
-        return "PartnerSet{" +
-                "partners=" + partners +
-                ", leader=" + leader +
-                ", self=" + self +
-                '}';
+        return "PartnerSet{" + "partners=" + partners + ", leader=" + leader + ", self=" + self + '}';
     }
 }
