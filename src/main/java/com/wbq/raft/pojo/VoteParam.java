@@ -20,6 +20,8 @@ public class VoteParam implements Serializable {
      */
     private String serverId;
 
+    private Long term;
+
     private Long lastLogIndex;
 
     private Long lastLogTerm;
