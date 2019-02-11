@@ -19,5 +19,5 @@ public interface Log {
 
     LogEntry lastLog();
 
-    int lastLogIndex();
+    long lastLogIndex();
 }

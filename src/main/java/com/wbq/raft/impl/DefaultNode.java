@@ -32,7 +32,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -63,6 +64,10 @@ public class DefaultNode implements Node, ClusterListener {
     private PartnerSet partnerSet;
 
     private Map<Partner, Long> nextIndex = new ConcurrentHashMap<>();
+    /**
+     * 对于每一个服务器 已经复制给他的日志的最高索引值
+     */
+    private Map<Partner, Long> matchIndex = new ConcurrentHashMap<>();
     /**
      * 服务器所知的最新的任期
      */
@@ -215,7 +220,80 @@ public class DefaultNode implements Node, ClusterListener {
 
             votedServerId = partnerSet.getSelf().getAddress();
             Set<Partner> peers = partnerSet.getOtherPartner();
-            List<Future> futureList = peers.stream().map(peer -> RaftThreadPool.submit(() -> {
+            List<Future<RpcResponse>> futureList = getRpcFutures(peers);
+
+            log.info("futureList count={}", futureList.size());
+            AtomicInteger votedCount = new AtomicInteger();
+            CountDownLatch latch = new CountDownLatch(futureList.size());
+            log.info("latch count={}", latch.getCount());
+
+            getVoteResult(futureList, votedCount, latch);
+
+            try {
+                latch.await(3500, TimeUnit.MICROSECONDS);
+            } catch (InterruptedException e) {
+                log.debug("InterruptedException by master election task");
+            }
+
+            log.info("node={} may become leader,get voted count={},node status={}", partnerSet.getSelf(),
+                    votedCount.get(), status);
+            // 如果投票期间，有其他服务器发送 appendEntry , 就可能变成 follower ,这时,应该停止
+            if (status == NodeStatus.FOLLOWER) {
+                return;
+            }
+            // 成为leader
+            if (votedCount.get() > partnerSet.getPartners().size() / 2) {
+                log.info("node ={}become leader", partnerSet.getSelf());
+                status = NodeStatus.LEADER;
+                partnerSet = partnerSet.withLeader(partnerSet.getSelf());
+                votedServerId = Strings.EMPTY;
+                // 初试化所有节点的nextIndex为自己最后一条日志的index+1,如果下次rpc时 follow和leader不一致，失败
+                // leader将会递减index重试
+                nextIndex = new ConcurrentHashMap<>(16);
+                matchIndex = new ConcurrentHashMap<>(16);
+                for (Partner partner : partnerSet.getOtherPartner()) {
+                    nextIndex.put(partner, logModule.lastLogIndex() + 1);
+                    matchIndex.put(partner, 0L);
+                }
+
+            } else {
+                // 重新选举
+                votedServerId = Strings.EMPTY;
+            }
+
+        }
+
+        private void getVoteResult(List<Future<RpcResponse>> futureList, AtomicInteger votedCount,
+                CountDownLatch latch) {
+            for (Future<RpcResponse> future : futureList) {
+                RaftThreadPool.execute(() -> {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        RpcResponse<VoteResult> response = (RpcResponse<VoteResult>) future.get(3000, TimeUnit.SECONDS);
+                        if (response == null) {
+                            return;
+                        }
+                        boolean voteGranted = response.getData().getSuccess();
+                        if (voteGranted) {
+                            votedCount.getAndIncrement();
+                        } else {
+                            long resultTerm = response.getData().getTerm();
+                            if (resultTerm >= currentTerm.get()) {
+                                // 更新任期
+                                currentTerm.set(resultTerm);
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.error("future.get() error e", e);
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+        }
+
+        private List<Future<RpcResponse>> getRpcFutures(Set<Partner> peers) {
+            return peers.stream().map(peer -> RaftThreadPool.submit(() -> {
                 long lastTerm = 0L;
                 LogEntry logEntry = logModule.lastLog();
                 if (logEntry != null) {
@@ -223,7 +301,7 @@ public class DefaultNode implements Node, ClusterListener {
                 }
 
                 VoteParam param = VoteParam.builder().serverId(partnerSet.getSelf().getAddress()).lastLogTerm(lastTerm)
-                        .term(currentTerm.get()).lastLogIndex((long) logModule.lastLogIndex()).build();
+                        .term(currentTerm.get()).lastLogIndex(logModule.lastLogIndex()).build();
                 RpcRequest request = RpcRequest.builder().type(RpcRequest.Type.VOTE).url(peer.getAddress()).data(param)
                         .build();
                 try {
@@ -233,12 +311,6 @@ public class DefaultNode implements Node, ClusterListener {
                     return null;
                 }
             })).filter(Objects::nonNull).collect(Collectors.toList());
-
-            log.info("voteResult futureList={}", futureList.size());
-            AtomicBoolean success = new AtomicBoolean();
-            CountDownLatch latch = new CountDownLatch(futureList.size());
-
-
         }
     }
 }
