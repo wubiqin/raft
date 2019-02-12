@@ -2,6 +2,7 @@ package com.wbq.raft.impl;
 
 import com.wbq.raft.Log;
 import com.wbq.raft.Node;
+import com.wbq.raft.StateMachine;
 import com.wbq.raft.change.ClusterListener;
 import com.wbq.raft.change.Result;
 import com.wbq.raft.config.NodeConfig;
@@ -11,6 +12,7 @@ import com.wbq.raft.config.PartnerSet;
 import com.wbq.raft.pojo.ClientRequest;
 import com.wbq.raft.pojo.ClientResponse;
 import com.wbq.raft.pojo.LogEntry;
+import com.wbq.raft.pojo.Replication;
 import com.wbq.raft.pojo.RequestParam;
 import com.wbq.raft.pojo.RequestResult;
 import com.wbq.raft.pojo.VoteParam;
@@ -28,11 +30,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -43,7 +49,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class DefaultNode implements Node, ClusterListener {
     /**
-     * 选举时间间隔
+     * 选举时间间隔 todo 目前更新为单线程 理论上可以使用volatile
      */
     private AtomicLong electionTime = new AtomicLong(10 * 1000);
     /**
@@ -85,6 +91,22 @@ public class DefaultNode implements Node, ClusterListener {
      * 日志条目集
      */
     private Log logModule;
+    /**
+     * 心跳任务
+     */
+    private HeartBeatTask heartBeatTask = new HeartBeatTask();
+    /**
+     * 选举任务
+     */
+    private ElectionTask electionTask = new ElectionTask();
+    /**
+     * 失败的复制队列
+     */
+    private LinkedBlockingQueue<Replication> replicationFailQueue = new LinkedBlockingQueue<>(2048);
+    /**
+     * 状态机
+     */
+    private StateMachine stateMachine;
 
     @Override
     public void setConfig(NodeConfig config) {
@@ -242,25 +264,28 @@ public class DefaultNode implements Node, ClusterListener {
                 return;
             }
             // 成为leader
-            if (votedCount.get() > partnerSet.getPartners().size() / 2) {
-                log.info("node ={}become leader", partnerSet.getSelf());
-                status = NodeStatus.LEADER;
-                partnerSet = partnerSet.withLeader(partnerSet.getSelf());
-                votedServerId = Strings.EMPTY;
-                // 初试化所有节点的nextIndex为自己最后一条日志的index+1,如果下次rpc时 follow和leader不一致，失败
-                // leader将会递减index重试
-                nextIndex = new ConcurrentHashMap<>(16);
-                matchIndex = new ConcurrentHashMap<>(16);
-                for (Partner partner : partnerSet.getOtherPartner()) {
-                    nextIndex.put(partner, logModule.lastLogIndex() + 1);
-                    matchIndex.put(partner, 0L);
-                }
-
+            if (votedCount.get() >= partnerSet.getPartners().size() / 2) {
+                becomeLeader();
             } else {
                 // 重新选举
                 votedServerId = Strings.EMPTY;
             }
 
+        }
+
+        private void becomeLeader() {
+            log.info("node ={}become leader", partnerSet.getSelf());
+            status = NodeStatus.LEADER;
+            partnerSet = partnerSet.withLeader(partnerSet.getSelf());
+            votedServerId = Strings.EMPTY;
+            // 初试化所有节点的nextIndex为自己最后一条日志的index+1,如果下次rpc时 follow和leader不一致，失败
+            // leader将会递减index重试
+            nextIndex = new ConcurrentHashMap<>(16);
+            matchIndex = new ConcurrentHashMap<>(16);
+            for (Partner partner : partnerSet.getOtherPartner()) {
+                nextIndex.put(partner, logModule.lastLogIndex() + 1);
+                matchIndex.put(partner, 0L);
+            }
         }
 
         private void getVoteResult(List<Future<RpcResponse>> futureList, AtomicInteger votedCount,
@@ -311,6 +336,54 @@ public class DefaultNode implements Node, ClusterListener {
                     return null;
                 }
             })).filter(Objects::nonNull).collect(Collectors.toList());
+        }
+    }
+
+    /**
+     * 消费失败的复制 todo 使用消息队列？</br>
+     * 只有leader需要
+     */
+    class ReplicationFailQueueConsumer implements Runnable {
+        /**
+         * 一分钟
+         */
+        private final long interval = 60 * 1000;
+
+        @Override
+        public void run() {
+            // 死循环 todo 修改为监听者模式
+            for (;;) {
+                try {
+                    // 这里拿不到的话会阻塞
+                    Replication r = replicationFailQueue.take();
+                    if (status == NodeStatus.LEADER) {
+                        log.info("当前节点已经不是leader了 leader={} 清空队列中的数据 node={},queue size={}",
+                                partnerSet.getLeader().getAddress(), partnerSet.getSelf().getAddress(),
+                                replicationFailQueue.size());
+                        // 清空队列中的消息 todo check
+                        replicationFailQueue.clear();
+                    }
+                    log.warn("ReplicationFailQueueConsumer take a task will retry replication,content detail={}",
+                            r.getLogEntry());
+                    if (System.currentTimeMillis() - r.getOffTime() > interval) {
+                        log.warn("replication fail queue may full or handle slow");
+                    }
+                    Callable callable = r.getCallable();
+                    @SuppressWarnings("unchecked")
+                    Future<Boolean> future = RaftThreadPool.submit(callable);
+                    // 重试成功
+                    if (future.get(3000, TimeUnit.MILLISECONDS)) {
+                        // 应用到状态机
+
+                    }
+
+                } catch (InterruptedException e) {
+                    log.error("ignore InterruptedException");
+                    e.printStackTrace();
+                } catch (ExecutionException | TimeoutException e) {
+                    log.error(e.getMessage());
+                }
+            }
         }
     }
 }
