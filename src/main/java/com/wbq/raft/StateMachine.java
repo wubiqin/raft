@@ -17,4 +17,18 @@ public interface StateMachine {
      * @param logEntries 日志
      */
     void apply(List<LogEntry> logEntries);
+
+    /**
+     * may return null
+     * 
+     * @param key
+     * @return
+     */
+    LogEntry get(String key);
+
+    String getString(String key);
+
+    void set(String key, String val);
+
+    void del(List<String> keys);
 }

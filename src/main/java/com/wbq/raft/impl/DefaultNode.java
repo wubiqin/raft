@@ -1,5 +1,6 @@
 package com.wbq.raft.impl;
 
+import com.google.common.collect.Lists;
 import com.wbq.raft.Log;
 import com.wbq.raft.Node;
 import com.wbq.raft.StateMachine;
@@ -22,6 +23,7 @@ import com.wbq.raft.rpc.RpcClient;
 import com.wbq.raft.rpc.RpcRequest;
 import com.wbq.raft.rpc.RpcResponse;
 import com.wbq.raft.util.RaftThreadPool;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.logging.log4j.util.Strings;
 
@@ -47,6 +49,7 @@ import java.util.stream.Collectors;
  *  * @author biqin.wu  * @since 10 February 2019  
  */
 @Slf4j
+@Getter
 public class DefaultNode implements Node, ClusterListener {
     /**
      * 选举时间间隔 todo 目前更新为单线程 理论上可以使用volatile
@@ -64,8 +67,10 @@ public class DefaultNode implements Node, ClusterListener {
      * 心跳间隔
      */
     private final long heartBeatTick = 5 * 1000;
-
-    private volatile NodeStatus status;
+    /**
+     * 节点当前的状态 #{@link NodeStatus}
+     */
+    private volatile NodeStatus status = NodeStatus.FOLLOWER;
 
     private PartnerSet partnerSet;
 
@@ -86,6 +91,16 @@ public class DefaultNode implements Node, ClusterListener {
      */
     private volatile String votedServerId;
 
+    /* ============ 所有服务器上经常变的 ============= */
+    /**
+     * 已知的最大的被提交的日志条目的索引
+     */
+    private volatile long commitIndex;
+    /**
+     * 最后被应用到状态机的日志条目索引值
+     */
+    private volatile long lastApplied;
+
     private RpcClient rpcClient = new DefaultRpcClient();
     /**
      * 日志条目集
@@ -100,13 +115,17 @@ public class DefaultNode implements Node, ClusterListener {
      */
     private ElectionTask electionTask = new ElectionTask();
     /**
+     * 消费失败的任务
+     */
+    private ReplicationFailQueueConsumer replicationFailQueueConsumer = new ReplicationFailQueueConsumer();
+    /**
      * 失败的复制队列
      */
     private LinkedBlockingQueue<Replication> replicationFailQueue = new LinkedBlockingQueue<>(2048);
     /**
      * 状态机
      */
-    private StateMachine stateMachine;
+    private StateMachine stateMachine = DefaultStateMachine.getInstance();
 
     @Override
     public void setConfig(NodeConfig config) {
@@ -150,6 +169,10 @@ public class DefaultNode implements Node, ClusterListener {
 
     @Override
     public Result removePeer(Partner partner) {
+        return null;
+    }
+
+    public Future<Boolean> replication(Partner partner, LogEntry logEntry) {
         return null;
     }
 
@@ -360,7 +383,7 @@ public class DefaultNode implements Node, ClusterListener {
                         log.info("当前节点已经不是leader了 leader={} 清空队列中的数据 node={},queue size={}",
                                 partnerSet.getLeader().getAddress(), partnerSet.getSelf().getAddress(),
                                 replicationFailQueue.size());
-                        // 清空队列中的消息 todo check
+                        // 直接清空队列中的消息 todo check
                         replicationFailQueue.clear();
                     }
                     log.warn("ReplicationFailQueueConsumer take a task will retry replication,content detail={}",
@@ -373,8 +396,15 @@ public class DefaultNode implements Node, ClusterListener {
                     Future<Boolean> future = RaftThreadPool.submit(callable);
                     // 重试成功
                     if (future.get(3000, TimeUnit.MILLISECONDS)) {
-                        // 应用到状态机
+                        // 有机会应用到状态机
+                        String successCount = stateMachine.getString(r.getSuccessKey());
+                        stateMachine.set(r.getSuccessKey(), String.valueOf(Integer.valueOf(successCount) + 1));
 
+                        String count = stateMachine.getString(r.getCountKey());
+                        if (Integer.valueOf(successCount) + 1 >= Integer.valueOf(count) / 2) {
+                            stateMachine.apply(Collections.singletonList(r.getLogEntry()));
+                            stateMachine.del(Lists.newArrayList(r.getCountKey(), r.getSuccessKey()));
+                        }
                     }
 
                 } catch (InterruptedException e) {

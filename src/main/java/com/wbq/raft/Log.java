@@ -2,8 +2,6 @@ package com.wbq.raft;
 
 import com.wbq.raft.pojo.LogEntry;
 
-import java.util.List;
-
 /**
  * <p>
  * 日志实现
@@ -11,11 +9,16 @@ import java.util.List;
  *   @author biqin.wu  * @since 07 February 2019  
  */
 public interface Log {
-    void write(List<LogEntry> logEntries);
+    void write(LogEntry logEntry);
 
-    LogEntry read(int index);
+    /**
+     * may return null
+     * @param index
+     * @return
+     */
+    LogEntry read(long index);
 
-    void removeFrom(int index);
+    void removeFrom(long index);
 
     LogEntry lastLog();
 
