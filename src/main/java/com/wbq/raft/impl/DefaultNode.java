@@ -1,6 +1,7 @@
 package com.wbq.raft.impl;
 
 import com.google.common.collect.Lists;
+import com.wbq.raft.Consensus;
 import com.wbq.raft.Log;
 import com.wbq.raft.Node;
 import com.wbq.raft.StateMachine;
@@ -18,12 +19,10 @@ import com.wbq.raft.pojo.RequestParam;
 import com.wbq.raft.pojo.RequestResult;
 import com.wbq.raft.pojo.VoteParam;
 import com.wbq.raft.pojo.VoteResult;
-import com.wbq.raft.rpc.DefaultRpcClient;
-import com.wbq.raft.rpc.RpcClient;
-import com.wbq.raft.rpc.RpcRequest;
-import com.wbq.raft.rpc.RpcResponse;
+import com.wbq.raft.rpc.*;
 import com.wbq.raft.util.RaftThreadPool;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.logging.log4j.util.Strings;
 
@@ -58,10 +57,12 @@ public class DefaultNode implements Node, ClusterListener {
     /**
      * 上一次选举时间
      */
+    @Setter
     private AtomicLong preElectionTime = new AtomicLong();
     /**
      * 上一次心跳时间
      */
+    @Setter
     private AtomicLong preHeartBeatTime = new AtomicLong();
     /**
      * 心跳间隔
@@ -70,6 +71,7 @@ public class DefaultNode implements Node, ClusterListener {
     /**
      * 节点当前的状态 #{@link NodeStatus}
      */
+    @Setter
     private volatile NodeStatus status = NodeStatus.FOLLOWER;
 
     private PartnerSet partnerSet;
@@ -82,6 +84,7 @@ public class DefaultNode implements Node, ClusterListener {
     /**
      * 服务器所知的最新的任期
      */
+    @Setter
     private AtomicLong currentTerm = new AtomicLong();
     /**
      * 当前获得选票的server
@@ -89,19 +92,24 @@ public class DefaultNode implements Node, ClusterListener {
      * ip:port
      * </p>
      */
+    @Setter
     private volatile String votedServerId;
 
     /* ============ 所有服务器上经常变的 ============= */
     /**
      * 已知的最大的被提交的日志条目的索引
      */
+    @Setter
     private volatile long commitIndex;
     /**
      * 最后被应用到状态机的日志条目索引值
      */
+    @Setter
     private volatile long lastApplied;
 
     private RpcClient rpcClient = new DefaultRpcClient();
+
+    private RpcServer rpcServer;
     /**
      * 日志条目集
      */
@@ -126,20 +134,82 @@ public class DefaultNode implements Node, ClusterListener {
      * 状态机
      */
     private StateMachine stateMachine = DefaultStateMachine.getInstance();
+    /**
+     * 一致性
+     */
+    private Consensus consensus = new DefaultConsensus(this);
+    /**
+     * 集群成员监听
+     */
+    private ClusterListener clusterListener = new DefaultClusterListener(this);
+
+    private volatile boolean started;
+
+    private NodeConfig config;
+
+    private DefaultNode() {
+    }
+
+    public static DefaultNode getInstance() {
+        return Singleton.INSTANCE;
+    }
+
+    private static class Singleton {
+        private static final DefaultNode INSTANCE = new DefaultNode();
+    }
+
+    @Override
+    public void init() throws Throwable {
+        if (started) {
+            return;
+        }
+        synchronized (this) {
+            if (started) {
+                return;
+            }
+            rpcServer.start();
+
+            RaftThreadPool.scheduleAtFixDelay(heartBeatTask, 500);
+            RaftThreadPool.scheduleAtFixedRate(electionTask, 6000, 500);
+            RaftThreadPool.execute(replicationFailQueueConsumer);
+
+            LogEntry logEntry = logModule.lastLog();
+            if (logEntry != null) {
+                currentTerm.set(logEntry.getTerm());
+            }
+
+            started = true;
+            log.info("node stated success node={}", partnerSet.getSelf());
+        }
+    }
 
     @Override
     public void setConfig(NodeConfig config) {
+        this.config = config;
+        partnerSet = PartnerSet.builder().build();
 
+        for (String addr : config.getAddresses()) {
+            Partner partner = Partner.builder().address(addr).build();
+            partnerSet.add(partner);
+            String local = String.format("localhost:%s", config.getPort());
+            if (local.equals(addr)) {
+                partnerSet = partnerSet.withSelf(partner);
+            }
+        }
+
+        rpcServer = new DefaultRpcServer(config.getPort(), this);
     }
 
     @Override
     public VoteResult handleVote(VoteParam param) {
-        return null;
+        log.warn("invoke handleVote param={}", param);
+        return consensus.vote(param);
     }
 
     @Override
     public RequestResult handleAppendLog(RequestParam param) {
-        return null;
+        log.warn("");
+        return consensus.appendLog(param);
     }
 
     @Override
@@ -150,11 +220,6 @@ public class DefaultNode implements Node, ClusterListener {
     @Override
     public ClientResponse redirect(ClientRequest request) {
         return null;
-    }
-
-    @Override
-    public void init() throws Throwable {
-
     }
 
     @Override
