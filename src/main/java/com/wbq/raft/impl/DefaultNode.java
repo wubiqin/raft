@@ -379,7 +379,6 @@ public class DefaultNode implements Node, ClusterListener {
 
                 } catch (InterruptedException e) {
                     log.error("ignore InterruptedException");
-                    e.printStackTrace();
                 } catch (ExecutionException | TimeoutException e) {
                     log.error(e.getMessage());
                 }
