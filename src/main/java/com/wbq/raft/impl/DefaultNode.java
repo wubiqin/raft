@@ -310,71 +310,79 @@ public class DefaultNode implements Node, ClusterListener {
     }
 
     public Future<Boolean> replication(Partner partner, LogEntry logEntry) {
-        return RaftThreadPool.submit(() -> {
-            long start = System.currentTimeMillis(), end = start;
+        return RaftThreadPool.submit(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                {
+                    long start = System.currentTimeMillis(), end = start;
 
-            while (end - start <= 20 * 1000) {
-                RequestParam param = RequestParam.builder().leaderCommitIndex(commitIndex).term(currentTerm.get())
-                        .leaderId(partnerSet.getLeader().getAddress()).logEntries(Collections.singletonList(logEntry))
-                        .build();
-                // todo check
-                long next = getNextIndex().get(partner);
-                LinkedList<LogEntry> logEntries = new LinkedList<>();
-                if (logEntry.getIndex() >= next) {
-                    for (long i = next; i < logEntry.getIndex(); i++) {
-                        LogEntry l = logModule.read(i);
-                        if (l != null) {
-                            logEntries.add(l);
+                    while (end - start <= 20 * 1000) {
+                        RequestParam param = RequestParam.builder().leaderCommitIndex(commitIndex)
+                                .term(currentTerm.get()).leaderId(partnerSet.getLeader().getAddress())
+                                .logEntries(Collections.singletonList(logEntry)).build();
+                        // todo check
+                        long next = getNextIndex().get(partner);
+                        LinkedList<LogEntry> logEntries = new LinkedList<>();
+                        if (logEntry.getIndex() >= next) {
+                            for (long i = next; i < logEntry.getIndex(); i++) {
+                                LogEntry l = logModule.read(i);
+                                if (l != null) {
+                                    logEntries.add(l);
+                                }
+                            }
+                        } else {
+                            logEntries.add(logEntry);
                         }
-                    }
-                } else {
-                    logEntries.add(logEntry);
-                }
 
-                LogEntry preLog = getPreLog(logEntries.getFirst());
-                param = param.withPreIndex(preLog.getIndex()).withPreTerm(preLog.getTerm());
+                        LogEntry preLog = getPreLog(logEntries.getFirst());
+                        param = param.withPreIndex(preLog.getIndex()).withPreTerm(preLog.getTerm());
 
-                RpcRequest request = RpcRequest.builder().type(RpcRequest.Type.APPEND_ENTRIES).url(partner.getAddress())
-                        .data(param).build();
+                        RpcRequest request = RpcRequest.builder().type(RpcRequest.Type.APPEND_ENTRIES)
+                                .url(partner.getAddress()).data(param).build();
 
-                try {
-                    RpcResponse response = rpcClient.send(request);
-                    if (response == null) {
-                        return false;
-                    }
-                    RequestResult result = (RequestResult) response.getData();
-                    if (result != null && result.getSuccess()) {
-                        log.info("append log success follower={} entry={}", partner, logEntry);
+                        try {
+                            RpcResponse response = rpcClient.send(request);
+                            if (response == null) {
+                                return false;
+                            }
+                            RequestResult result = (RequestResult) response.getData();
+                            if (result != null && result.getSuccess()) {
+                                log.info("append log success follower={} entry={}", partner, logEntry);
 
-                        nextIndex.put(partner, logEntry.getIndex() + 1);
-                        matchIndex.put(partner, logEntry.getIndex() + 1);
-                        return true;
-                    } else if (result != null) {
-                        if (result.getTerm() > currentTerm.get()) {
-                            log.info("follower term ={}, my term={} node become follower={}", result.getTerm(),
-                                    currentTerm.get(), partnerSet.getSelf());
+                                nextIndex.put(partner, logEntry.getIndex() + 1);
+                                matchIndex.put(partner, logEntry.getIndex() + 1);
+                                return true;
+                            } else if (result != null) {
+                                if (result.getTerm() > currentTerm.get()) {
+                                    log.info("follower term ={}, my term={} node become follower={}", result.getTerm(),
+                                            currentTerm.get(), partnerSet.getSelf());
 
-                            currentTerm.set(result.getTerm());
-                            status = NodeStatus.FOLLOWER;
+                                    currentTerm.set(result.getTerm());
+                                    status = NodeStatus.FOLLOWER;
+                                    return false;
+                                }
+                            } else {
+                                if (next == 0L) {
+                                    next = 1L;
+                                }
+                                nextIndex.put(partner, next - 1);
+                                log.warn("follower={} nextIndex not match reduce nextIndex and retry  nextIndex={} ",
+                                        partner, next);
+                            }
+                            end = System.currentTimeMillis();
+                        } catch (Exception e) {
+                            log.error(e.getMessage());
+                            // todo 放队列重试
+                            Replication replication = Replication.builder().callable(this).logEntry(logEntry)
+                                    .partner(partner).offTime(System.currentTimeMillis()).build();
+                            replicationFailQueue.add(replication);
                             return false;
                         }
-                    } else {
-                        if (next == 0L) {
-                            next = 1L;
-                        }
-                        nextIndex.put(partner, next - 1);
-                        log.warn("follower={} nextIndex not match reduce nextIndex and retry  nextIndex={} ", partner,
-                                next);
+
                     }
-                    end = System.currentTimeMillis();
-                } catch (Exception e) {
-                    log.error(e.getMessage());
-                    // todo 放队列重试
                     return false;
                 }
-
             }
-            return false;
         });
 
     }
