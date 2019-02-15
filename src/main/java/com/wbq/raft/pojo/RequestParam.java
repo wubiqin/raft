@@ -3,6 +3,7 @@ package com.wbq.raft.pojo;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.ToString;
+import lombok.experimental.Wither;
 
 import java.util.List;
 
@@ -12,6 +13,7 @@ import java.util.List;
 @Builder
 @ToString
 @Getter
+@Wither
 public class RequestParam {
 
     private static final long serialVersionUID = 3142476754276804342L;

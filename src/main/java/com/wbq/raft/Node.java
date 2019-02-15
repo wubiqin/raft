@@ -37,6 +37,9 @@ public interface Node extends LifeCycle {
 
     /**
      * 处理客户端请求
+     * <p>
+     * 客户端的请求包含一条状态机需要执行的命令
+     * </p>
      * 
      * @param request
      * @return

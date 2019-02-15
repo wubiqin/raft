@@ -7,18 +7,12 @@ import com.wbq.raft.Node;
 import com.wbq.raft.StateMachine;
 import com.wbq.raft.change.ClusterListener;
 import com.wbq.raft.change.Result;
+import com.wbq.raft.common.RequestType;
 import com.wbq.raft.config.NodeConfig;
 import com.wbq.raft.config.NodeStatus;
 import com.wbq.raft.config.Partner;
 import com.wbq.raft.config.PartnerSet;
-import com.wbq.raft.pojo.ClientRequest;
-import com.wbq.raft.pojo.ClientResponse;
-import com.wbq.raft.pojo.LogEntry;
-import com.wbq.raft.pojo.Replication;
-import com.wbq.raft.pojo.RequestParam;
-import com.wbq.raft.pojo.RequestResult;
-import com.wbq.raft.pojo.VoteParam;
-import com.wbq.raft.pojo.VoteResult;
+import com.wbq.raft.pojo.*;
 import com.wbq.raft.rpc.*;
 import com.wbq.raft.util.RaftThreadPool;
 import lombok.Getter;
@@ -26,11 +20,8 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.logging.log4j.util.Strings;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import javax.security.auth.spi.LoginModule;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -51,7 +42,7 @@ import java.util.stream.Collectors;
 @Getter
 public class DefaultNode implements Node, ClusterListener {
     /**
-     * 选举时间间隔 todo 目前更新为单线程 理论上可以使用volatile
+     * 选举时间间隔
      */
     private AtomicLong electionTime = new AtomicLong(10 * 1000);
     /**
@@ -208,37 +199,194 @@ public class DefaultNode implements Node, ClusterListener {
 
     @Override
     public RequestResult handleAppendLog(RequestParam param) {
-        log.warn("");
+        log.warn("invoke handleAppendLog param={}", param);
         return consensus.appendLog(param);
     }
 
+    /**
+     * 这里需要保证同步
+     * 
+     * @param request
+     * @return
+     */
     @Override
-    public ClientResponse handleClientRequest(ClientRequest request) {
-        return null;
+    public synchronized ClientResponse handleClientRequest(ClientRequest request) {
+        log.info("client invoke type={},key={},val={}", RequestType.codeOf(request.getType()).name(), request.getKey(),
+                request.getVal());
+        if (status != NodeStatus.LEADER) {
+            log.warn("node={} is not leader  redirect to leader={}", partnerSet.getSelf().getAddress(),
+                    partnerSet.getLeader().getAddress());
+            return redirect(request);
+        }
+
+        if (RequestType.codeOf(request.getType()) == RequestType.GET) {
+            LogEntry logEntry = stateMachine.get(request.getKey());
+            if (logEntry != null) {
+                return ClientResponse.builder().data(logEntry.getCommand()).build();
+            }
+            return ClientResponse.builder().data(null).build();
+        }
+
+        LogEntry logEntry = LogEntry.builder()
+                .command(Command.builder().key(request.getKey()).val(request.getVal()).build()).term(currentTerm.get())
+                .build();
+
+        logModule.write(logEntry);
+        log.warn("write logEntry finish ligEntry={}", logEntry);
+
+        final AtomicLong success = new AtomicLong(0);
+
+        // 复制到其他节点上
+        List<Future<Boolean>> futures = partnerSet.getOtherPartner().stream().map(peer -> replication(peer, logEntry))
+                .collect(Collectors.toList());
+        futures.forEach(future -> RaftThreadPool.execute(() -> {
+            try {
+                if (future.get(3000, TimeUnit.MILLISECONDS)) {
+                    success.incrementAndGet();
+                }
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                log.error("replication fail");
+            }
+        }));
+
+        List<Long> matchIndexList = matchIndex.values().stream().sorted().collect(Collectors.toList());
+
+        if (matchIndexList.size() < 2) {
+            log.info("only one node in cluster node={}", partnerSet.getSelf());
+            return apply(logEntry);
+        }
+        // 如果存在 i>commitIndex 代表大多数matchIndex>=commitIndex
+        // 而且log在i处的term==currentTerm 则令commitIndex=i
+        int medium = matchIndexList.size() / 2;
+        long i = matchIndexList.get(medium);
+
+        if (i > commitIndex) {
+            LogEntry l = logModule.read(i);
+            if (l != null && l.getTerm() == currentTerm.get()) {
+                commitIndex = i;
+            }
+        }
+        // 超过一半成功
+        if (success.get() > futures.size() / 2) {
+            return apply(logEntry);
+        } else {
+            logModule.removeFrom(logEntry.getIndex());
+            log.warn("fail apply to local state machine logEntry={}", logEntry);
+            return ClientResponse.builder().msg("fail").build();
+        }
+    }
+
+    private ClientResponse apply(LogEntry logEntry) {
+        commitIndex = logEntry.getIndex();
+        stateMachine.apply(Collections.singletonList(logEntry));
+        lastApplied = commitIndex;
+
+        log.info("success apply to local stateMachine logEntry info={}", logEntry);
+        return ClientResponse.builder().msg("success").build();
     }
 
     @Override
     public ClientResponse redirect(ClientRequest request) {
-        return null;
+        log.info("request redirect url={}", partnerSet.getLeader().getAddress());
+        RpcRequest req = RpcRequest.builder().url(partnerSet.getLeader().getAddress()).type(RpcRequest.Type.CLIENT)
+                .data(request).build();
+        RpcResponse response = rpcClient.send(req);
+        return (ClientResponse) response.getData();
     }
 
     @Override
     public void destroy() throws Throwable {
-
+        rpcServer.stop();
     }
 
     @Override
     public Result addPeer(Partner partner) {
-        return null;
+        return clusterListener.addPeer(partner);
     }
 
     @Override
     public Result removePeer(Partner partner) {
-        return null;
+        return clusterListener.removePeer(partner);
     }
 
     public Future<Boolean> replication(Partner partner, LogEntry logEntry) {
-        return null;
+        return RaftThreadPool.submit(() -> {
+            long start = System.currentTimeMillis(), end = start;
+
+            while (end - start <= 20 * 1000) {
+                RequestParam param = RequestParam.builder().leaderCommitIndex(commitIndex).term(currentTerm.get())
+                        .leaderId(partnerSet.getLeader().getAddress()).logEntries(Collections.singletonList(logEntry))
+                        .build();
+                // todo check
+                long next = getNextIndex().get(partner);
+                LinkedList<LogEntry> logEntries = new LinkedList<>();
+                if (logEntry.getIndex() >= next) {
+                    for (long i = next; i < logEntry.getIndex(); i++) {
+                        LogEntry l = logModule.read(i);
+                        if (l != null) {
+                            logEntries.add(l);
+                        }
+                    }
+                } else {
+                    logEntries.add(logEntry);
+                }
+
+                LogEntry preLog = getPreLog(logEntries.getFirst());
+                param = param.withPreIndex(preLog.getIndex()).withPreTerm(preLog.getTerm());
+
+                RpcRequest request = RpcRequest.builder().type(RpcRequest.Type.APPEND_ENTRIES).url(partner.getAddress())
+                        .data(param).build();
+
+                try {
+                    RpcResponse response = rpcClient.send(request);
+                    if (response == null) {
+                        return false;
+                    }
+                    RequestResult result = (RequestResult) response.getData();
+                    if (result != null && result.getSuccess()) {
+                        log.info("append log success follower={} entry={}", partner, logEntry);
+
+                        nextIndex.put(partner, logEntry.getIndex() + 1);
+                        matchIndex.put(partner, logEntry.getIndex() + 1);
+                        return true;
+                    } else if (result != null) {
+                        if (result.getTerm() > currentTerm.get()) {
+                            log.info("follower term ={}, my term={} node become follower={}", result.getTerm(),
+                                    currentTerm.get(), partnerSet.getSelf());
+
+                            currentTerm.set(result.getTerm());
+                            status = NodeStatus.FOLLOWER;
+                            return false;
+                        }
+                    } else {
+                        if (next == 0L) {
+                            next = 1L;
+                        }
+                        nextIndex.put(partner, next - 1);
+                        log.warn("follower={} nextIndex not match reduce nextIndex and retry  nextIndex={} ", partner,
+                                next);
+                    }
+                    end = System.currentTimeMillis();
+                } catch (Exception e) {
+                    log.error(e.getMessage());
+                    // todo 放队列重试
+                    return false;
+                }
+
+            }
+            return false;
+        });
+
+    }
+
+    private LogEntry getPreLog(LogEntry logEntry) {
+        LogEntry entry = logModule.read(logEntry.getIndex() - 1);
+
+        if (entry == null) {
+            log.warn("get perLog is null , parameter logEntry : {}", logEntry);
+            entry = LogEntry.builder().index(0L).term(0L).command(null).build();
+        }
+        return entry;
     }
 
     /**
