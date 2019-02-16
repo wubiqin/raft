@@ -49,7 +49,7 @@ public class DefaultConsensus implements Consensus {
                         node.getVotedServerId(), param.getServerId());
                 log.info("node={} current term={},param term={}", node.getPartnerSet().getSelf(), node.getCurrentTerm(),
                         param.getTerm());
-                if (node.getLogModule() != null) {
+                if (node.getLogModule().lastLog() != null) {
                     if (node.getLogModule().lastLog().getTerm() > param.getLastLogTerm()) {
                         return VoteResult.fail;
                     }
@@ -62,7 +62,6 @@ public class DefaultConsensus implements Consensus {
                 node.setStatus(NodeStatus.FOLLOWER);
                 node.getPartnerSet().setLeader(Partner.builder().address(param.getServerId()).build());
                 node.setVotedServerId(param.getServerId());
-                log.info("node ={} success vote for node={}", node.getPartnerSet().getSelf(), param.getServerId());
                 return VoteResult.builder().term(node.getCurrentTerm().get()).success(true).build();
             }
 
@@ -96,6 +95,8 @@ public class DefaultConsensus implements Consensus {
 
             // 心跳
             if (CollectionUtils.isEmpty(param.getLogEntries())) {
+                log.info("node={} append heartbeat success leader term={},node term={}", node.getPartnerSet().getSelf(),
+                        param.getTerm(), node.getCurrentTerm().get());
                 return RequestResult.builder().success(true).term(node.getCurrentTerm().get()).build();
             }
 

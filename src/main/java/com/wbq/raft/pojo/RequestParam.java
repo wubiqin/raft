@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.ToString;
 import lombok.experimental.Wither;
 
+import java.io.Serializable;
 import java.util.List;
 
 /**
@@ -14,7 +15,7 @@ import java.util.List;
 @ToString
 @Getter
 @Wither
-public class RequestParam {
+public class RequestParam implements Serializable {
 
     private static final long serialVersionUID = 3142476754276804342L;
     /**

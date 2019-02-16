@@ -20,7 +20,7 @@ public class PartnerSet implements Serializable {
 
     private static final long serialVersionUID = 8890662240439938114L;
 
-    private Set<Partner> partners = Sets.newHashSet();
+    private Set<Partner> partners;
     @Setter
     private volatile Partner leader;
 

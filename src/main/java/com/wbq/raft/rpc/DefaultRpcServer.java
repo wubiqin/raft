@@ -18,17 +18,29 @@ public class DefaultRpcServer implements RpcServer {
 
     private com.alipay.remoting.rpc.RpcServer server;
 
+    private volatile boolean flag;
+
     public DefaultRpcServer(int port, Node node) {
+        if (flag) {
+            return;
+        }
 
-        server = new com.alipay.remoting.rpc.RpcServer(port, false, false);
-        server.registerUserProcessor(new AbstractRaftUserProcessor<RpcRequest>() {
-            @Override
-            public Object handleRequest(BizContext bizCtx, RpcRequest request) throws Exception {
-                return handle(request);
+        synchronized (this) {
+            if (flag) {
+                return;
             }
-        });
+            server = new com.alipay.remoting.rpc.RpcServer(port, false, false);
+            server.registerUserProcessor(new AbstractRaftUserProcessor<RpcRequest>() {
+                @Override
+                public Object handleRequest(BizContext bizCtx, RpcRequest request) throws Exception {
+                    return handle(request);
+                }
+            });
 
-        this.node = node;
+            this.node = node;
+            flag = true;
+        }
+
     }
 
     @Override

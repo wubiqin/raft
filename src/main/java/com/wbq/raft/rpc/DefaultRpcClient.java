@@ -18,10 +18,10 @@ public class DefaultRpcClient implements RpcClient {
     @Override
     public RpcResponse send(RpcRequest request) {
         try {
-            return (RpcResponse) RPC_CLIENT.invokeSync(request.getUrl(), request, 5000);
+            return (RpcResponse) RPC_CLIENT.invokeSync(request.getUrl(), request, 200000);
         } catch (RemotingException | InterruptedException e) {
-            log.error("fail to send with rpc request={}", request);
-            throw new RuntimeException(e);
+            log.error("fail to send with rpc request={} type={}", request.getUrl(),request.getType().name());
+            throw new RuntimeException();
         }
     }
 }

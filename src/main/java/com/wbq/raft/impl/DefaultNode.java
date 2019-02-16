@@ -1,6 +1,7 @@
 package com.wbq.raft.impl;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import com.wbq.raft.Consensus;
 import com.wbq.raft.Log;
 import com.wbq.raft.Node;
@@ -20,17 +21,8 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.logging.log4j.util.Strings;
 
-import javax.security.auth.spi.LoginModule;
 import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -104,7 +96,7 @@ public class DefaultNode implements Node, ClusterListener {
     /**
      * 日志条目集
      */
-    private Log logModule;
+    private Log logModule = DefaultLog.getInstance();
     /**
      * 心跳任务
      */
@@ -128,11 +120,11 @@ public class DefaultNode implements Node, ClusterListener {
     /**
      * 一致性
      */
-    private Consensus consensus = new DefaultConsensus(this);
+    private Consensus consensus;
     /**
      * 集群成员监听
      */
-    private ClusterListener clusterListener = new DefaultClusterListener(this);
+    private ClusterListener clusterListener;
 
     private volatile boolean started;
 
@@ -160,6 +152,9 @@ public class DefaultNode implements Node, ClusterListener {
             }
             rpcServer.start();
 
+            consensus = new DefaultConsensus(this);
+            clusterListener = new DefaultClusterListener(this);
+
             RaftThreadPool.scheduleAtFixDelay(heartBeatTask, 500);
             RaftThreadPool.scheduleAtFixedRate(electionTask, 6000, 500);
             RaftThreadPool.execute(replicationFailQueueConsumer);
@@ -177,7 +172,7 @@ public class DefaultNode implements Node, ClusterListener {
     @Override
     public void setConfig(NodeConfig config) {
         this.config = config;
-        partnerSet = PartnerSet.builder().build();
+        partnerSet = PartnerSet.builder().partners(Sets.newHashSet()).build();
 
         for (String addr : config.getAddresses()) {
             Partner partner = Partner.builder().address(addr).build();
@@ -404,7 +399,7 @@ public class DefaultNode implements Node, ClusterListener {
 
         @Override
         public void run() {
-            if (status == NodeStatus.LEADER) {
+            if (status != NodeStatus.LEADER) {
                 return;
             }
             long cur = System.currentTimeMillis();
@@ -413,8 +408,10 @@ public class DefaultNode implements Node, ClusterListener {
             }
 
             log.info("*********NextIndex************");
-            partnerSet.getOtherPartner()
-                    .forEach(peer -> log.info("peer={},nextIndex={}", peer.getAddress(), nextIndex.get(peer)));
+            partnerSet.getOtherPartner().forEach(peer -> {
+                log.info("leader={}", partnerSet.getLeader().getAddress());
+                log.info("peer={},nextIndex={}", peer.getAddress(), nextIndex.get(peer));
+            });
 
             preHeartBeatTime.set(System.currentTimeMillis());
 
@@ -474,21 +471,20 @@ public class DefaultNode implements Node, ClusterListener {
             }
             long cur = System.currentTimeMillis();
             // raft随机时间 解决冲突
-            electionTime.getAndAdd(ThreadLocalRandom.current().nextLong(50));
+            electionTime.addAndGet(ThreadLocalRandom.current().nextLong(50));
             if (cur - preElectionTime.get() < electionTime.get()) {
                 return;
             }
             status = NodeStatus.CANDIDATE;
             log.info("node={} will become candidate and start election ,current term ={},lastEntry={}",
                     partnerSet.getSelf(), currentTerm, logModule.lastLog());
-            preElectionTime.getAndAdd(System.currentTimeMillis() + ThreadLocalRandom.current().nextLong(200) + 150);
+            preElectionTime.set(System.currentTimeMillis() + ThreadLocalRandom.current().nextLong(200) + 150);
             currentTerm.addAndGet(1);
 
             votedServerId = partnerSet.getSelf().getAddress();
             Set<Partner> peers = partnerSet.getOtherPartner();
             List<Future<RpcResponse>> futureList = getRpcFutures(peers);
 
-            log.info("futureList count={}", futureList.size());
             AtomicInteger votedCount = new AtomicInteger();
             CountDownLatch latch = new CountDownLatch(futureList.size());
             log.info("latch count={}", latch.getCount());
@@ -496,13 +492,13 @@ public class DefaultNode implements Node, ClusterListener {
             getVoteResult(futureList, votedCount, latch);
 
             try {
-                latch.await(3500, TimeUnit.MICROSECONDS);
+                latch.await(3500, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 log.debug("InterruptedException by master election task");
             }
 
             log.info("node={} may become leader,get voted count={},node status={}", partnerSet.getSelf(),
-                    votedCount.get(), status);
+                    votedCount.get(), status.name());
             // 如果投票期间，有其他服务器发送 appendEntry , 就可能变成 follower ,这时,应该停止
             if (status == NodeStatus.FOLLOWER) {
                 return;
@@ -535,12 +531,13 @@ public class DefaultNode implements Node, ClusterListener {
         private void getVoteResult(List<Future<RpcResponse>> futureList, AtomicInteger votedCount,
                 CountDownLatch latch) {
             for (Future<RpcResponse> future : futureList) {
-                RaftThreadPool.execute(() -> {
+                RaftThreadPool.submit(() -> {
                     try {
                         @SuppressWarnings("unchecked")
-                        RpcResponse<VoteResult> response = (RpcResponse<VoteResult>) future.get(3000, TimeUnit.SECONDS);
+                        RpcResponse<VoteResult> response = (RpcResponse<VoteResult>) future.get(3000,
+                                TimeUnit.MILLISECONDS);
                         if (response == null) {
-                            return;
+                            return -1;
                         }
                         boolean voteGranted = response.getData().getSuccess();
                         if (voteGranted) {
@@ -552,8 +549,10 @@ public class DefaultNode implements Node, ClusterListener {
                                 currentTerm.set(resultTerm);
                             }
                         }
+                        return 0;
                     } catch (Exception e) {
                         log.error("future.get() error e", e);
+                        return -1;
                     } finally {
                         latch.countDown();
                     }
@@ -579,7 +578,7 @@ public class DefaultNode implements Node, ClusterListener {
                     log.error("ElectionTask fail url={}", request.getUrl());
                     return null;
                 }
-            })).filter(Objects::nonNull).collect(Collectors.toList());
+            })).collect(Collectors.toList());
         }
     }
 

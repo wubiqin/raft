@@ -48,7 +48,7 @@ public class DefaultLog implements Log {
             }
         }
         try {
-            RocksDB.open(options, logDir);
+            rocksDB = RocksDB.open(options, logDir);
         } catch (RocksDBException e) {
             log.error(e.getMessage());
         }
