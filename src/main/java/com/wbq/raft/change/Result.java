@@ -7,7 +7,7 @@ import lombok.ToString;
 import java.io.Serializable;
 
 /**
- *  * @author biqin.wu  * @since 10 February 2019  
+ *  * @author biqin.wu  * @since 10 February 2019  a
  */
 @Getter
 @Builder
