@@ -1,17 +1,20 @@
 package com.wbq.raft;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
+import com.wbq.raft.common.RequestType;
+import com.wbq.raft.pojo.ClientRequest;
+import com.wbq.raft.rpc.DefaultRpcClient;
+import com.wbq.raft.rpc.RpcRequest;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest
 public class RaftApplicationTests {
 
-    @Test
-    public void contextLoads() {
+    public static void main(String[] args) {
+        DefaultRpcClient client=new DefaultRpcClient();
+
+        ClientRequest clientRequest = ClientRequest.builder().key("hello"+1).val("world").type(RequestType.PUT.getCode())
+                .build();
+        RpcRequest req = RpcRequest.builder().url("localhost:8003").type(RpcRequest.Type.CLIENT).data(clientRequest)
+                .build();
+        client.send(req);
     }
 
 }
-

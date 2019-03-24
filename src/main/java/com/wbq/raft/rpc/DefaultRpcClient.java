@@ -20,7 +20,7 @@ public class DefaultRpcClient implements RpcClient {
         try {
             return (RpcResponse) RPC_CLIENT.invokeSync(request.getUrl(), request, 200000);
         } catch (RemotingException | InterruptedException e) {
-            log.error("fail to send with rpc request={} type={}", request.getUrl(),request.getType().name());
+            log.error("fail to send with rpc request={} type={}", request.getUrl(),request.getType().name(),e);
             throw new RuntimeException();
         }
     }

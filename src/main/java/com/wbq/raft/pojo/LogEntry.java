@@ -1,9 +1,6 @@
 package com.wbq.raft.pojo;
 
-import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
-import lombok.ToString;
+import lombok.*;
 import lombok.experimental.Wither;
 
 import java.io.Serializable;
@@ -13,9 +10,11 @@ import java.io.Serializable;
  */
 @Builder
 @ToString
-@Getter
 @EqualsAndHashCode
 @Wither
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class LogEntry implements Serializable, Comparable {
 
     private static final long serialVersionUID = 3078982288100998255L;

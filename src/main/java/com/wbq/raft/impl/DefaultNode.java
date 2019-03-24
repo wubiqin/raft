@@ -236,11 +236,11 @@ public class DefaultNode implements Node, ClusterListener {
                 .collect(Collectors.toList());
         futures.forEach(future -> RaftThreadPool.execute(() -> {
             try {
-                if (future.get(3000, TimeUnit.MILLISECONDS)) {
+                if (future.get(6000, TimeUnit.MILLISECONDS)) {
                     success.incrementAndGet();
                 }
             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                log.error("replication fail");
+                log.error("replication fail", e);
             }
         }));
 
@@ -262,7 +262,7 @@ public class DefaultNode implements Node, ClusterListener {
             }
         }
         // 超过一半成功
-        if (success.get() > futures.size() / 2) {
+        if (success.get() >= futures.size() / 2) {
             return apply(logEntry);
         } else {
             logModule.removeFrom(logEntry.getIndex());
@@ -319,7 +319,7 @@ public class DefaultNode implements Node, ClusterListener {
                         long next = getNextIndex().get(partner);
                         LinkedList<LogEntry> logEntries = new LinkedList<>();
                         if (logEntry.getIndex() >= next) {
-                            for (long i = next; i < logEntry.getIndex(); i++) {
+                            for (long i = next; i <= logEntry.getIndex(); i++) {
                                 LogEntry l = logModule.read(i);
                                 if (l != null) {
                                     logEntries.add(l);
@@ -330,7 +330,8 @@ public class DefaultNode implements Node, ClusterListener {
                         }
 
                         LogEntry preLog = getPreLog(logEntries.getFirst());
-                        param = param.withPreIndex(preLog.getIndex()).withPreTerm(preLog.getTerm());
+                        param = param.withPreIndex(preLog.getIndex()).withPreTerm(preLog.getTerm())
+                                .withLogEntries(logEntries);
 
                         RpcRequest request = RpcRequest.builder().type(RpcRequest.Type.APPEND_ENTRIES)
                                 .url(partner.getAddress()).data(param).build();
@@ -345,7 +346,7 @@ public class DefaultNode implements Node, ClusterListener {
                                 log.info("append log success follower={} entry={}", partner, logEntry);
 
                                 nextIndex.put(partner, logEntry.getIndex() + 1);
-                                matchIndex.put(partner, logEntry.getIndex() + 1);
+                                matchIndex.put(partner, logEntry.getIndex());
                                 return true;
                             } else if (result != null) {
                                 if (result.getTerm() > currentTerm.get()) {
@@ -368,9 +369,9 @@ public class DefaultNode implements Node, ClusterListener {
                         } catch (Exception e) {
                             log.error(e.getMessage());
                             // todo 放队列重试
-                            Replication replication = Replication.builder().callable(this).logEntry(logEntry)
-                                    .partner(partner).offTime(System.currentTimeMillis()).build();
-                            replicationFailQueue.add(replication);
+                            // Replication replication = Replication.builder().callable(this).logEntry(logEntry)
+                            // .partner(partner).offTime(System.currentTimeMillis()).build();
+                            // replicationFailQueue.add(replication);
                             return false;
                         }
 
@@ -393,7 +394,7 @@ public class DefaultNode implements Node, ClusterListener {
     }
 
     /**
-     * 心跳任务 节点为leader时才需要
+     * 心跳任务 节点为leader时才需要 //todo 网络等原因 形成了分区 移除节点
      */
     class HeartBeatTask implements Runnable {
 

@@ -13,6 +13,10 @@ public enum RequestType {
      */
     PUT(1);
 
+    public int getCode() {
+        return code;
+    }
+
     private final int code;
 
     RequestType(int code) {

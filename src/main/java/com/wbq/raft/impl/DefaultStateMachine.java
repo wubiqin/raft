@@ -1,7 +1,6 @@
 package com.wbq.raft.impl;
 
 import com.alibaba.fastjson.JSON;
-import com.google.common.base.Strings;
 import com.wbq.raft.StateMachine;
 import com.wbq.raft.pojo.Command;
 import com.wbq.raft.pojo.LogEntry;
@@ -14,7 +13,6 @@ import org.springframework.util.CollectionUtils;
 import java.io.File;
 import java.nio.charset.Charset;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * <p>

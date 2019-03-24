@@ -21,7 +21,7 @@ import java.util.concurrent.locks.ReentrantLock;
 @Slf4j
 public class DefaultLog implements Log {
 
-    private static String dbDir = "D:\\wubiqin\\raft\\" + System.getProperty("serverPort");
+    public static String dbDir = "D:\\wubiqin\\raft\\" + System.getProperty("serverPort");
 
     private static String logDir;
 
@@ -65,20 +65,18 @@ public class DefaultLog implements Log {
     @Override
     public void write(LogEntry logEntry) {
         boolean success = false;
-        LogEntry le = null;
         try {
             lock.tryLock(3000, TimeUnit.MILLISECONDS);
-            LogEntry l = logEntry.withIndex(lastLogIndex() + 1);
+            logEntry.setIndex(lastLogIndex() + 1);
 
-            rocksDB.put(l.getIndex().toString().getBytes(), JSON.toJSONBytes(l));
+            rocksDB.put(logEntry.getIndex().toString().getBytes(), JSON.toJSONBytes(logEntry));
             success = true;
-            le = l;
-            log.info("default log write logEntry to db success logEntry={}", l);
+            log.info("default log write logEntry to db success logEntry={}", logEntry);
         } catch (InterruptedException | RocksDBException e) {
             log.error(e.getMessage());
         } finally {
             if (success) {
-                updateLastLogIndex(le.getIndex());
+                updateLastLogIndex(logEntry.getIndex());
             }
             lock.unlock();
         }
